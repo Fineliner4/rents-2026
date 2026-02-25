@@ -76,10 +76,13 @@ df["series_id"] = df["series_id"].astype(str).str.strip()
 # Filtra solo series_id que acaban en "03"
 df_03 = df[df["series_id"].str.endswith("03", na=False)].copy()
 
+# Elimina el prefijo de 3 letras (ej. "LAS", "LAU") y el sufijo final "03"
+df_03["series_id"] = df_03["series_id"].str[3:-2]
+
 # === 6) Guardar CSV filtrado ===
 df_03.to_csv(csv_path, index=False, encoding="utf-8")
 
-print(f"✅ CSV filtrado (solo series_id termina en '03') creado: {csv_path}")
+print(f"CSV filtrado (series_id termina en '03' y se exporta sin prefijo ni sufijo) creado: {csv_path}")
 print("Filas filtradas:", len(df_03), "| Columnas:", df_03.shape[1])
 print("Series únicas filtradas:", df_03["series_id"].nunique())
-print("Ejemplos series_id:", df_03["series_id"].drop_duplicates().head(10).tolist())
+print("Ejemplos series_id (sin prefijo de 3 letras ni sufijo 03):", df_03["series_id"].drop_duplicates().head(10).tolist())
