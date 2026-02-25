@@ -9,6 +9,7 @@ Created on Mon Feb 23 21:23:30 2026
 #https://download.bls.gov/pub/time.series/la/la.measure
 #Como indica url, 03 = UNEMPLOYMENT. La serie original data.60.metro contiene todos los datos en una misma columna 
 #este archivo limpia la columna series_id para quedarse sólo con 03.
+#limpia "series_id" para facilitar los cruces
 #la.data.60.Metro  -  Metropolitan Statistical Areas
 #more information regarding the series: https://download.bls.gov/pub/time.series/la/la.txt
 
@@ -21,7 +22,7 @@ from urllib3.util.retry import Retry
 # === 1) URL del BLS ===
 url = "https://download.bls.gov/pub/time.series/la/la.data.60.Metro"
 
-# === 2) Dónde guardarlo ===
+# === 2) Directorio ===
 out_dir = "/Users/vegagonzalez/Desktop/rents"
 os.makedirs(out_dir, exist_ok=True)
 
@@ -76,7 +77,7 @@ df["series_id"] = df["series_id"].astype(str).str.strip()
 # Filtra solo series_id que acaban en "03"
 df_03 = df[df["series_id"].str.endswith("03", na=False)].copy()
 
-# Elimina el prefijo de 3 letras (ej. "LAS", "LAU") y el sufijo final "03"
+# Elimina el prefijo de 3 letras y el sufijo final "03"
 df_03["series_id"] = df_03["series_id"].str[3:-2]
 
 # === 6) Guardar CSV filtrado ===
