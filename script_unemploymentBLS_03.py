@@ -72,14 +72,25 @@ df.columns = df.columns.str.strip()
 
 # Quita espacios en los valores de series_id 
 df["series_id"] = df["series_id"].astype(str).str.strip()
+# Quita espacios y convierte año a número para poder filtrar rango
+if "year" not in df.columns:
+    raise ValueError("La columna 'year' no existe en el archivo descargado.")
+df["year"] = pd.to_numeric(df["year"].astype(str).str.strip(), errors="coerce")
 
-# Filtra solo series_id que acaban en "03"
-df_03 = df[df["series_id"].str.endswith("03", na=False)].copy()
+# Filtra solo series_id que acaban en "03" y años entre 2012 y 2025
+df_03 = df[
+    df["series_id"].str.endswith("03", na=False)
+    & df["year"].between(2012, 2025, inclusive="both")
+].copy()
+
+# Elimina el prefijo de 3 letras (ej. "LAS", "LAU") y el sufijo final "03"
+df_03["series_id"] = df_03["series_id"].str[3:-2]
 
 # === 6) Guardar CSV filtrado ===
 df_03.to_csv(csv_path, index=False, encoding="utf-8")
 
-print(f"✅ CSV filtrado (solo series_id termina en '03') creado: {csv_path}")
+print(f"CSV filtrado creado: {csv_path}")
 print("Filas filtradas:", len(df_03), "| Columnas:", df_03.shape[1])
 print("Series únicas filtradas:", df_03["series_id"].nunique())
-print("Ejemplos series_id:", df_03["series_id"].drop_duplicates().head(10).tolist())
+print("Años incluidos:", int(df_03["year"].min()) if not df_03.empty else None, "-", int(df_03["year"].max()) if not df_03.empty else None)
+print("Ejemplos series_id (sin prefijo de 3 letras ni sufijo 03):", df_03["series_id"].drop_duplicates().head(10).tolist())
