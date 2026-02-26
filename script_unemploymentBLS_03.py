@@ -10,6 +10,7 @@ Created on Mon Feb 23 21:23:30 2026
 #Como indica url, 03 = UNEMPLOYMENT. La serie original data.60.metro contiene todos los datos en una misma columna 
 #este archivo limpia la columna series_id para quedarse sólo con 03.
 #limpia "series_id" para facilitar los cruces
+#recorta la serie de 2012-2025 
 #la.data.60.Metro  -  Metropolitan Statistical Areas
 #more information regarding the series: https://download.bls.gov/pub/time.series/la/la.txt
 
@@ -83,9 +84,6 @@ df_03 = df[
     df["series_id"].str.endswith("03", na=False)
     & df["year"].between(2012, 2025, inclusive="both")
 ].copy()
-
-# Elimina el prefijo de 3 letras (ej. "LAS", "LAU") y el sufijo final "03"
-df_03["series_id"] = df_03["series_id"].str[3:-2]
 
 # Elimina el prefijo de 3 letras y el sufijo final "03"
 df_03["series_id"] = df_03["series_id"].str[3:-2]
