@@ -9,6 +9,7 @@ Created on Mon Feb 23 21:23:30 2026
 #https://download.bls.gov/pub/time.series/la/la.measure
 #Como indica url, 03 = UNEMPLOYMENT. La serie original data.60.metro contiene todos los datos en una misma columna 
 #este archivo limpia la columna series_id para quedarse sólo con 03.
+#limpia "series_id" para facilitar los cruces
 #la.data.60.Metro  -  Metropolitan Statistical Areas
 #more information regarding the series: https://download.bls.gov/pub/time.series/la/la.txt
 
@@ -21,7 +22,7 @@ from urllib3.util.retry import Retry
 # === 1) URL del BLS ===
 url = "https://download.bls.gov/pub/time.series/la/la.data.60.Metro"
 
-# === 2) Dónde guardarlo ===
+# === 2) Directorio ===
 out_dir = "/Users/vegagonzalez/Desktop/rents"
 os.makedirs(out_dir, exist_ok=True)
 
@@ -86,11 +87,13 @@ df_03 = df[
 # Elimina el prefijo de 3 letras (ej. "LAS", "LAU") y el sufijo final "03"
 df_03["series_id"] = df_03["series_id"].str[3:-2]
 
+# Elimina el prefijo de 3 letras y el sufijo final "03"
+df_03["series_id"] = df_03["series_id"].str[3:-2]
+
 # === 6) Guardar CSV filtrado ===
 df_03.to_csv(csv_path, index=False, encoding="utf-8")
 
-print(f"CSV filtrado creado: {csv_path}")
+print(f"CSV filtrado (series_id termina en '03' y se exporta sin prefijo ni sufijo) creado: {csv_path}")
 print("Filas filtradas:", len(df_03), "| Columnas:", df_03.shape[1])
 print("Series únicas filtradas:", df_03["series_id"].nunique())
-print("Años incluidos:", int(df_03["year"].min()) if not df_03.empty else None, "-", int(df_03["year"].max()) if not df_03.empty else None)
 print("Ejemplos series_id (sin prefijo de 3 letras ni sufijo 03):", df_03["series_id"].drop_duplicates().head(10).tolist())
