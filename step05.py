@@ -52,7 +52,7 @@ STEP 5:
 
 STEP 6:
 - Añade Zori_index desde:
-  /Users/vegagonzalez/Desktop/rents/Metro_zori_uc_sfrcondomfr_sm_sa_month.csv
+  /Users/vegagonzalez/Desktop/rents/Metro_zori_uc_sfrcondomfr_sm_sa_month_cleaned.csv
 - Convierte ZORI de formato wide a long: RegionID, year, month, Zori_index
 - Cruce:
   panel.MSACode == zori.RegionID
@@ -81,7 +81,7 @@ RPI_CSV = os.path.join(BASE_DIR, "RPP", "MARPP_MSA_2008_2023.csv")
 POP_CSV = os.path.join(BASE_DIR, "population_2012_2024.csv")
 GAZ_TXT = os.path.join(BASE_DIR, "2024_Gaz_cbsa_national.txt")
 PERMITS_CSV = os.path.join(BASE_DIR, "permits_cbsa_2012_2025.csv")
-ZORI_CSV = os.path.join(BASE_DIR, "Metro_zori_uc_sfrcondomfr_sm_sa_month.csv")
+ZORI_CSV = os.path.join(BASE_DIR, "Metro_zori_uc_sfrcondomfr_sm_sa_month_cleaned.csv")
 
 # Output
 OUT_PATH = os.path.join(
@@ -490,10 +490,10 @@ print("Celdas Permits NO vacias:", int(panel5["Permits"].notna().sum()), "de", l
 
 
 # ============================================================
-# STEP 6: Add Zori_index from Metro_zori_uc_sfrcondomfr_sm_sa_month.csv
+# STEP 6: Add Zori_index from Metro_zori_uc_sfrcondomfr_sm_sa_month_cleaned.csv
 # ============================================================
 print("\n==============================")
-print("STEP 6: Add Zori_index from Metro_zori_uc_sfrcondomfr_sm_sa_month.csv")
+print("STEP 6: Add Zori_index from Metro_zori_uc_sfrcondomfr_sm_sa_month_cleaned.csv")
 print("==============================")
 
 zori_raw = pd.read_csv(ZORI_CSV, dtype=str)
@@ -501,7 +501,7 @@ zori_raw = strip_columns(zori_raw)
 
 if "RegionID" not in zori_raw.columns:
     raise ValueError(
-        "No encuentro columna 'RegionID' en Metro_zori_uc_sfrcondomfr_sm_sa_month.csv. Columnas: "
+        "No encuentro columna 'RegionID' en Metro_zori_uc_sfrcondomfr_sm_sa_month_cleaned.csv. Columnas: "
         + str(list(zori_raw.columns))
     )
 
@@ -511,7 +511,7 @@ date_cols = [
 ]
 if len(date_cols) == 0:
     raise ValueError(
-        "No pude detectar columnas de fecha YYYY-MM-DD en Metro_zori_uc_sfrcondomfr_sm_sa_month.csv."
+        "No pude detectar columnas de fecha YYYY-MM-DD en Metro_zori_uc_sfrcondomfr_sm_sa_month_cleaned.csv."
     )
 
 zori_long = zori_raw.melt(
@@ -540,9 +540,10 @@ panel6 = panel5.merge(
     zori_long,
     left_on=["MSACode", "year", "month"],
     right_on=["RegionID", "year", "month"],
-    how="left",
+    how="inner",
 ).drop(columns=["RegionID"])
 
+print("Filas tras drop de no-cruce MSACode/RegionID/year/month:", len(panel6))
 print("Celdas Zori_index NO vacias:", int(panel6["Zori_index"].notna().sum()), "de", len(panel6))
 
 # QC: validar faltantes de Zori_index solo esperados en 2012-2014
