@@ -606,10 +606,10 @@ panel6 = panel6[
 ].copy()
 
 # ============================================================
-# STEP 7: Add HOAM columns D/E from HOAM_CBSA_Data.xlsx by CBSACode
+# STEP 7: Add monthly HOAM columns D/E from HOAM_CBSA_Data.xlsx
 # ============================================================
 print("\n==============================")
-print("STEP 7: Add HOAM columns D/E from HOAM_CBSA_Data.xlsx")
+print("STEP 7: Add monthly HOAM columns from HOAM_CBSA_Data.xlsx")
 print("==============================")
 
 hoam_raw = pd.read_excel(HOAM_XLSX, dtype=str)
@@ -618,34 +618,57 @@ hoam_raw = strip_columns(hoam_raw)
 if hoam_raw.shape[1] < 5:
     raise ValueError("HOAM_CBSA_Data.xlsx tiene menos de 5 columnas. Columnas: " + str(list(hoam_raw.columns)))
 
-col_d_name = hoam_raw.columns[3]
-col_e_name = hoam_raw.columns[4]
-if pd.isna(col_d_name) or str(col_d_name).strip() == "" or str(col_d_name).startswith("Unnamed:"):
-    col_d_name = "HOAM_D"
-if pd.isna(col_e_name) or str(col_e_name).strip() == "" or str(col_e_name).startswith("Unnamed:"):
-    col_e_name = "HOAM_E"
+# Por posición: B=CBSA, C=Month (YYYY-MM), D=Affordability, E=Housing_Cost%_of_Med_HHIncome
+hoam = hoam_raw.iloc[:, [1, 2, 3, 4]].copy()
+hoam.columns = ["CBSA_Code", "Month", "Affordability", "Housing_Cost%_of_Med_HHIncome"]
 
-hoam = hoam_raw.iloc[:, [1, 3, 4]].copy()
-hoam.columns = ["CBSACode", col_d_name, col_e_name]
-
+# Estandarizar claves (in-place en panel, sin crear columnas auxiliares en panel)
 panel6["CBSACode"] = panel6["CBSACode"].map(zfill_5)
-hoam["CBSACode"] = hoam["CBSACode"].map(zfill_5)
+panel6["year"] = panel6["year"].astype("string").str.strip()
+panel6["month"] = panel6["month"].astype("string").str.strip().str.zfill(2)
 
-hoam[col_d_name] = hoam[col_d_name].astype("string").str.strip().replace("", pd.NA)
-hoam[col_e_name] = hoam[col_e_name].astype("string").str.strip().replace("", pd.NA)
-hoam = hoam.dropna(subset=["CBSACode"]).copy()
+hoam["CBSA_Code"] = hoam["CBSA_Code"].map(zfill_5)
+hoam["Month"] = hoam["Month"].astype("string").str.strip().str.replace('"', "", regex=False).str.replace("'", "", regex=False)
 
+month_parts = hoam["Month"].str.extract(r"^((?:19|20)\d{2})-(\d{1,2})$")
+hoam["year"] = month_parts[0].astype("string")
+hoam["month"] = month_parts[1].astype("string").str.zfill(2)
+
+hoam["Affordability"] = hoam["Affordability"].astype("string").str.strip().replace("", pd.NA)
+hoam["Housing_Cost%_of_Med_HHIncome"] = hoam["Housing_Cost%_of_Med_HHIncome"].astype("string").str.strip().replace("", pd.NA)
+
+hoam = hoam.dropna(subset=["CBSA_Code", "year", "month"]).copy()
 hoam = (
-    hoam.groupby("CBSACode", as_index=False)
+    hoam.groupby(["CBSA_Code", "year", "month"], as_index=False)
     .agg(
         {
-            col_d_name: lambda s: s.dropna().iloc[0] if s.notna().any() else pd.NA,
-            col_e_name: lambda s: s.dropna().iloc[0] if s.notna().any() else pd.NA,
+            "Affordability": lambda x: x.dropna().iloc[0] if x.notna().any() else pd.NA,
+            "Housing_Cost%_of_Med_HHIncome": lambda x: x.dropna().iloc[0] if x.notna().any() else pd.NA,
         }
     )
 )
 
-panel7 = panel6.merge(hoam, on="CBSACode", how="left")
+panel_rows_before = len(panel6)
+panel7 = panel6.merge(
+    hoam,
+    left_on=["CBSACode", "year", "month"],
+    right_on=["CBSA_Code", "year", "month"],
+    how="left",
+    indicator=True,
+)
+match_found = int((panel7["_merge"] == "both").sum())
+panel7 = panel7.drop(columns=["CBSA_Code", "_merge"])
+
+print("Filas panel antes merge HOAM:", panel_rows_before)
+print("Filas panel despues merge HOAM:", len(panel7))
+print("Pares (CBSACode, year, month) con match HOAM:", match_found)
+print("% missing Affordability:", round(panel7["Affordability"].isna().mean() * 100, 4), "%")
+print(
+    "% missing Housing_Cost%_of_Med_HHIncome:",
+    round(panel7["Housing_Cost%_of_Med_HHIncome"].isna().mean() * 100, 4),
+    "%",
+)
+
 panel7.to_csv(OUT_PATH, index=False, encoding="utf-8")
 
 print("\n==============================")
