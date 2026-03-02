@@ -144,6 +144,19 @@ def cbsa_from_geo_like(val):
     return zfill_5(val)
 
 
+def only_digits(x):
+    """Normaliza IDs tipo float/string y devuelve solo dígitos (o NA si queda vacío)."""
+    if pd.isna(x):
+        return pd.NA
+    s = str(x)
+    s = s.replace('"', "").replace("'", "")
+    s = s.strip()
+    s = re.sub(r"\.0$", "", s)
+    s = re.sub(r"\s+", "", s)
+    s = re.sub(r"\D", "", s)
+    return s if s else pd.NA
+
+
 def read_text_table_guess_sep(path: str) -> pd.DataFrame:
     """
     Lee un .txt tipo gazetteer probando separadores comunes (tab, pipe, coma).
@@ -297,10 +310,7 @@ base = base.drop(columns=["_k"])
 time_index = time_index.drop(columns=["_k"])
 
 panel = panel.merge(u2, on=["CBSACode", "year", "month"], how="left")
-
-# Filtro: unemployment_value no vacio (tu planteamiento original)
 panel["unemployment_value"] = panel["unemployment_value"].astype("string").str.strip()
-panel = panel[panel["unemployment_value"].notna() & (panel["unemployment_value"] != "")].copy()
 
 panel = panel[
     [
@@ -531,39 +541,49 @@ zori_long = zori_raw.melt(
 
 zori_long["date"] = pd.to_datetime(zori_long["date"], errors="coerce")
 zori_long = zori_long.dropna(subset=["date"]).copy()
+zori_long["year"] = zori_long["date"].dt.year.astype("Int64").astype("string")
+zori_long["month"] = zori_long["date"].dt.month.astype("Int64").astype("string").str.zfill(2)
+zori_long["RegionID_key"] = zori_long["RegionID"].map(only_digits)
+zori_long["Zori_index"] = pd.to_numeric(zori_long["Zori_index"], errors="coerce")
 
-zori_long["RegionID"] = zori_long["RegionID"].astype("string").str.strip()
-zori_long["year"] = zori_long["date"].dt.year.astype(str)
-zori_long["month"] = zori_long["date"].dt.month.astype(str).str.zfill(2)
-zori_long["Zori_index"] = zori_long["Zori_index"].astype("string").str.strip()
+zori_long = zori_long[pd.to_numeric(zori_long["year"], errors="coerce") >= 2015].copy()
 
 zori_long = (
-    zori_long[["RegionID", "year", "month", "Zori_index"]]
-    .groupby(["RegionID", "year", "month"], as_index=False)["Zori_index"]
-    .first()
+    zori_long.sort_values(["RegionID_key", "year", "month"])
+    .groupby(["RegionID_key", "year", "month"], as_index=False)["Zori_index"]
+    .agg(lambda s: s.dropna().iloc[0] if s.notna().any() else pd.NA)
 )
 
-panel5["MSACode"] = panel5["MSACode"].astype("string").str.strip()
+panel5["MSACode_key"] = panel5["MSACode"].map(only_digits)
+panel5["year"] = panel5["year"].astype("string").str.strip()
+panel5["month"] = panel5["month"].astype("string").str.strip().str.zfill(2)
+
+panel_key_set = set(panel5["MSACode_key"].dropna().tolist())
+zori_key_set = set(zori_long["RegionID_key"].dropna().tolist())
+key_intersection = panel_key_set.intersection(zori_key_set)
+print("Intersección de claves MSA (panel vs zori):", len(key_intersection))
+
 panel6 = panel5.merge(
     zori_long,
-    left_on=["MSACode", "year", "month"],
-    right_on=["RegionID", "year", "month"],
+    left_on=["MSACode_key", "year", "month"],
+    right_on=["RegionID_key", "year", "month"],
     how="inner",
-).drop(columns=["RegionID"])
+)
 
-print("Filas tras drop de no-cruce MSACode/RegionID/year/month:", len(panel6))
-print("Celdas Zori_index NO vacias:", int(panel6["Zori_index"].notna().sum()), "de", len(panel6))
+missing_pct = panel6["Zori_index"].isna().mean() * 100 if len(panel6) else 0.0
+print("Filas tras inner merge con ZORI:", len(panel6))
+print("% missing Zori_index tras merge:", round(missing_pct, 4), "%")
 
-# QC: validar faltantes de Zori_index solo esperados en 2012-2014
-panel6["Zori_index"] = panel6["Zori_index"].astype("string").str.strip()
-panel6["year_int"] = pd.to_numeric(panel6["year"], errors="coerce")
-missing_zori = panel6[(panel6["year_int"] >= 2015) & (panel6["Zori_index"].isna() | (panel6["Zori_index"] == ""))].copy()
-if len(missing_zori) == 0:
-    print("QC ZORI: OK - No hay blancos en Zori_index para años >= 2015")
+if panel6["Zori_index"].isna().any():
+    print("Missing Zori_index por year:")
+    print(panel6.loc[panel6["Zori_index"].isna()].groupby("year").size().head(50))
+    print("Missing Zori_index por MSACode_key:")
+    print(panel6.loc[panel6["Zori_index"].isna()].groupby("MSACode_key").size().head(50))
 else:
-    print("QC ZORI: WARNING - Hay", len(missing_zori), "filas con Zori_index en blanco para años >= 2015")
-    print("QC ZORI: Blancos por año (>=2015):")
-    print(missing_zori.groupby("year", as_index=False).size().head(20))
+    print("No hay missing en Zori_index tras merge.")
+
+panel6 = panel6[pd.to_numeric(panel6["year"], errors="coerce") >= 2015].copy()
+panel6 = panel6.drop(columns=["MSACode_key", "RegionID_key"])
 
 # Orden final: Zori_index a la derecha
 panel6 = panel6[
