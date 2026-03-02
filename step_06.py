@@ -90,11 +90,12 @@ POP_CSV = os.path.join(BASE_DIR, "population_2012_2024.csv")
 GAZ_TXT = os.path.join(BASE_DIR, "2024_Gaz_cbsa_national.txt")
 PERMITS_CSV = os.path.join(BASE_DIR, "permits_cbsa_2012_2025.csv")
 ZORI_CSV = os.path.join(BASE_DIR, "Metro_zori_uc_sfrcondomfr_sm_sa_month_cleaned.csv")
+HOAM_XLSX = os.path.join(BASE_DIR, "HOAM_CBSA_Data.xlsx")
 
 # Output
 OUT_PATH = os.path.join(
     BASE_DIR,
-    "panel_master_step6_cbsa_unemployment_rpi_population_aland_permits_zori.csv"
+    "panel_master_step7_cbsa_unemployment_rpi_population_aland_permits_zori_hoam.csv"
 )
 
 
@@ -604,11 +605,52 @@ panel6 = panel6[
     ]
 ].copy()
 
-panel6.to_csv(OUT_PATH, index=False, encoding="utf-8")
+# ============================================================
+# STEP 7: Add HOAM columns D/E from HOAM_CBSA_Data.xlsx by CBSACode
+# ============================================================
+print("\n==============================")
+print("STEP 7: Add HOAM columns D/E from HOAM_CBSA_Data.xlsx")
+print("==============================")
+
+hoam_raw = pd.read_excel(HOAM_XLSX, dtype=str)
+hoam_raw = strip_columns(hoam_raw)
+
+if hoam_raw.shape[1] < 5:
+    raise ValueError("HOAM_CBSA_Data.xlsx tiene menos de 5 columnas. Columnas: " + str(list(hoam_raw.columns)))
+
+col_d_name = hoam_raw.columns[3]
+col_e_name = hoam_raw.columns[4]
+if pd.isna(col_d_name) or str(col_d_name).strip() == "" or str(col_d_name).startswith("Unnamed:"):
+    col_d_name = "HOAM_D"
+if pd.isna(col_e_name) or str(col_e_name).strip() == "" or str(col_e_name).startswith("Unnamed:"):
+    col_e_name = "HOAM_E"
+
+hoam = hoam_raw.iloc[:, [1, 3, 4]].copy()
+hoam.columns = ["CBSACode", col_d_name, col_e_name]
+
+panel6["CBSACode"] = panel6["CBSACode"].map(zfill_5)
+hoam["CBSACode"] = hoam["CBSACode"].map(zfill_5)
+
+hoam[col_d_name] = hoam[col_d_name].astype("string").str.strip().replace("", pd.NA)
+hoam[col_e_name] = hoam[col_e_name].astype("string").str.strip().replace("", pd.NA)
+hoam = hoam.dropna(subset=["CBSACode"]).copy()
+
+hoam = (
+    hoam.groupby("CBSACode", as_index=False)
+    .agg(
+        {
+            col_d_name: lambda s: s.dropna().iloc[0] if s.notna().any() else pd.NA,
+            col_e_name: lambda s: s.dropna().iloc[0] if s.notna().any() else pd.NA,
+        }
+    )
+)
+
+panel7 = panel6.merge(hoam, on="CBSACode", how="left")
+panel7.to_csv(OUT_PATH, index=False, encoding="utf-8")
 
 print("\n==============================")
 print("OK - Output creado:", OUT_PATH)
-print("Filas:", len(panel6), "| Columnas:", panel6.shape[1])
+print("Filas:", len(panel7), "| Columnas:", panel7.shape[1])
 print("Ejemplo filas:")
-print(panel6.head(5))
+print(panel7.head(5))
 print("==============================")
