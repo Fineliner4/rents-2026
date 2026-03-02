@@ -90,11 +90,12 @@ POP_CSV = os.path.join(BASE_DIR, "population_2012_2024.csv")
 GAZ_TXT = os.path.join(BASE_DIR, "2024_Gaz_cbsa_national.txt")
 PERMITS_CSV = os.path.join(BASE_DIR, "permits_cbsa_2012_2025.csv")
 ZORI_CSV = os.path.join(BASE_DIR, "Metro_zori_uc_sfrcondomfr_sm_sa_month_cleaned.csv")
+HOAM_XLSX = os.path.join(BASE_DIR, "HOAM_CBSA_Data.xlsx")
 
 # Output
 OUT_PATH = os.path.join(
     BASE_DIR,
-    "panel_master_step6_cbsa_unemployment_rpi_population_aland_permits_zori.csv"
+    "panel_master_step7_cbsa_unemployment_rpi_population_aland_permits_zori_hoam.csv"
 )
 
 
@@ -142,6 +143,19 @@ def standardize_series_id(s):
 def cbsa_from_geo_like(val):
     """Alias: extrae CBSACode de strings tipo '310M500US10180'."""
     return zfill_5(val)
+
+
+def only_digits(x):
+    """Normaliza IDs tipo float/string y devuelve solo dígitos (o NA si queda vacío)."""
+    if pd.isna(x):
+        return pd.NA
+    s = str(x)
+    s = s.replace('"', "").replace("'", "")
+    s = s.strip()
+    s = re.sub(r"\.0$", "", s)
+    s = re.sub(r"\s+", "", s)
+    s = re.sub(r"\D", "", s)
+    return s if s else pd.NA
 
 
 def read_text_table_guess_sep(path: str) -> pd.DataFrame:
@@ -297,10 +311,7 @@ base = base.drop(columns=["_k"])
 time_index = time_index.drop(columns=["_k"])
 
 panel = panel.merge(u2, on=["CBSACode", "year", "month"], how="left")
-
-# Filtro: unemployment_value no vacio (tu planteamiento original)
 panel["unemployment_value"] = panel["unemployment_value"].astype("string").str.strip()
-panel = panel[panel["unemployment_value"].notna() & (panel["unemployment_value"] != "")].copy()
 
 panel = panel[
     [
@@ -531,39 +542,49 @@ zori_long = zori_raw.melt(
 
 zori_long["date"] = pd.to_datetime(zori_long["date"], errors="coerce")
 zori_long = zori_long.dropna(subset=["date"]).copy()
+zori_long["year"] = zori_long["date"].dt.year.astype("Int64").astype("string")
+zori_long["month"] = zori_long["date"].dt.month.astype("Int64").astype("string").str.zfill(2)
+zori_long["RegionID_key"] = zori_long["RegionID"].map(only_digits)
+zori_long["Zori_index"] = pd.to_numeric(zori_long["Zori_index"], errors="coerce")
 
-zori_long["RegionID"] = zori_long["RegionID"].astype("string").str.strip()
-zori_long["year"] = zori_long["date"].dt.year.astype(str)
-zori_long["month"] = zori_long["date"].dt.month.astype(str).str.zfill(2)
-zori_long["Zori_index"] = zori_long["Zori_index"].astype("string").str.strip()
+zori_long = zori_long[pd.to_numeric(zori_long["year"], errors="coerce") >= 2015].copy()
 
 zori_long = (
-    zori_long[["RegionID", "year", "month", "Zori_index"]]
-    .groupby(["RegionID", "year", "month"], as_index=False)["Zori_index"]
-    .first()
+    zori_long.sort_values(["RegionID_key", "year", "month"])
+    .groupby(["RegionID_key", "year", "month"], as_index=False)["Zori_index"]
+    .agg(lambda s: s.dropna().iloc[0] if s.notna().any() else pd.NA)
 )
 
-panel5["MSACode"] = panel5["MSACode"].astype("string").str.strip()
+panel5["MSACode_key"] = panel5["MSACode"].map(only_digits)
+panel5["year"] = panel5["year"].astype("string").str.strip()
+panel5["month"] = panel5["month"].astype("string").str.strip().str.zfill(2)
+
+panel_key_set = set(panel5["MSACode_key"].dropna().tolist())
+zori_key_set = set(zori_long["RegionID_key"].dropna().tolist())
+key_intersection = panel_key_set.intersection(zori_key_set)
+print("Intersección de claves MSA (panel vs zori):", len(key_intersection))
+
 panel6 = panel5.merge(
     zori_long,
-    left_on=["MSACode", "year", "month"],
-    right_on=["RegionID", "year", "month"],
+    left_on=["MSACode_key", "year", "month"],
+    right_on=["RegionID_key", "year", "month"],
     how="inner",
-).drop(columns=["RegionID"])
+)
 
-print("Filas tras drop de no-cruce MSACode/RegionID/year/month:", len(panel6))
-print("Celdas Zori_index NO vacias:", int(panel6["Zori_index"].notna().sum()), "de", len(panel6))
+missing_pct = panel6["Zori_index"].isna().mean() * 100 if len(panel6) else 0.0
+print("Filas tras inner merge con ZORI:", len(panel6))
+print("% missing Zori_index tras merge:", round(missing_pct, 4), "%")
 
-# QC: validar faltantes de Zori_index solo esperados en 2012-2014
-panel6["Zori_index"] = panel6["Zori_index"].astype("string").str.strip()
-panel6["year_int"] = pd.to_numeric(panel6["year"], errors="coerce")
-missing_zori = panel6[(panel6["year_int"] >= 2015) & (panel6["Zori_index"].isna() | (panel6["Zori_index"] == ""))].copy()
-if len(missing_zori) == 0:
-    print("QC ZORI: OK - No hay blancos en Zori_index para años >= 2015")
+if panel6["Zori_index"].isna().any():
+    print("Missing Zori_index por year:")
+    print(panel6.loc[panel6["Zori_index"].isna()].groupby("year").size().head(50))
+    print("Missing Zori_index por MSACode_key:")
+    print(panel6.loc[panel6["Zori_index"].isna()].groupby("MSACode_key").size().head(50))
 else:
-    print("QC ZORI: WARNING - Hay", len(missing_zori), "filas con Zori_index en blanco para años >= 2015")
-    print("QC ZORI: Blancos por año (>=2015):")
-    print(missing_zori.groupby("year", as_index=False).size().head(20))
+    print("No hay missing en Zori_index tras merge.")
+
+panel6 = panel6[pd.to_numeric(panel6["year"], errors="coerce") >= 2015].copy()
+panel6 = panel6.drop(columns=["MSACode_key", "RegionID_key"])
 
 # Orden final: Zori_index a la derecha
 panel6 = panel6[
@@ -584,11 +605,104 @@ panel6 = panel6[
     ]
 ].copy()
 
-panel6.to_csv(OUT_PATH, index=False, encoding="utf-8")
+# ============================================================
+# STEP 7: Add monthly HOAM columns D/E from HOAM_CBSA_Data.xlsx
+# ============================================================
+print("\n==============================")
+print("STEP 7: Add monthly HOAM columns from HOAM_CBSA_Data.xlsx")
+print("==============================")
+
+hoam_raw = pd.read_excel(HOAM_XLSX, dtype=str)
+hoam_raw = strip_columns(hoam_raw)
+
+if hoam_raw.shape[1] < 5:
+    raise ValueError("HOAM_CBSA_Data.xlsx tiene menos de 5 columnas. Columnas: " + str(list(hoam_raw.columns)))
+
+# Por posición: B=CBSA, C=Month (YYYY-MM), D=Affordability, E=Housing_Cost%_of_Med_HHIncome
+hoam = hoam_raw.iloc[:, [1, 2, 3, 4]].copy()
+hoam.columns = ["CBSA_Code", "Month", "Affordability", "Housing_Cost%_of_Med_HHIncome"]
+
+# Estandarizar claves (in-place en panel, sin crear columnas auxiliares en panel)
+panel6["CBSACode"] = panel6["CBSACode"].map(zfill_5)
+panel6["year"] = panel6["year"].astype("string").str.strip()
+panel6["month"] = panel6["month"].astype("string").str.strip().str.zfill(2)
+
+hoam["CBSA_Code"] = hoam["CBSA_Code"].map(zfill_5)
+hoam["Month"] = (
+    hoam["Month"]
+    .astype("string")
+    .str.strip()
+    .str.replace('"', "", regex=False)
+    .str.replace("'", "", regex=False)
+)
+
+# Parseo robusto de Month mensual priorizando patrones explícitos YYYY-MM / YYYYMM
+ym_dash = hoam["Month"].str.extract(r"^((?:19|20)\d{2})-(\d{1,2})")
+ym_compact = hoam["Month"].str.extract(r"^((?:19|20)\d{2})(\d{2})$")
+
+hoam["year"] = ym_dash[0].astype("string")
+hoam["month"] = ym_dash[1].astype("string").str.zfill(2)
+
+fill_mask = hoam["year"].isna() | hoam["month"].isna()
+hoam.loc[fill_mask, "year"] = ym_compact.loc[fill_mask, 0].astype("string")
+hoam.loc[fill_mask, "month"] = ym_compact.loc[fill_mask, 1].astype("string").str.zfill(2)
+
+# Fallback para fechas completas o serial Excel
+fallback_mask = hoam["year"].isna() | hoam["month"].isna()
+month_dt = pd.to_datetime(hoam.loc[fallback_mask, "Month"], errors="coerce")
+month_num = pd.to_numeric(hoam.loc[fallback_mask, "Month"], errors="coerce")
+month_dt_serial = pd.to_datetime(month_num, unit="D", origin="1899-12-30", errors="coerce")
+month_dt = month_dt.where(month_dt.notna(), month_dt_serial)
+hoam.loc[fallback_mask, "year"] = month_dt.dt.year.astype("Int64").astype("string")
+hoam.loc[fallback_mask, "month"] = month_dt.dt.month.astype("Int64").astype("string").str.zfill(2)
+
+hoam["Affordability"] = hoam["Affordability"].astype("string").str.strip().replace("", pd.NA)
+hoam["Housing_Cost%_of_Med_HHIncome"] = hoam["Housing_Cost%_of_Med_HHIncome"].astype("string").str.strip().replace("", pd.NA)
+
+hoam = hoam.dropna(subset=["CBSA_Code", "year", "month"]).copy()
+hoam = (
+    hoam.groupby(["CBSA_Code", "year", "month"], as_index=False)
+    .agg(
+        {
+            "Affordability": lambda x: x.dropna().iloc[0] if x.notna().any() else pd.NA,
+            "Housing_Cost%_of_Med_HHIncome": lambda x: x.dropna().iloc[0] if x.notna().any() else pd.NA,
+        }
+    )
+)
+
+panel_rows_before = len(panel6)
+panel7 = panel6.merge(
+    hoam,
+    left_on=["CBSACode", "year", "month"],
+    right_on=["CBSA_Code", "year", "month"],
+    how="left",
+    indicator=True,
+)
+match_found = int((panel7["_merge"] == "both").sum())
+panel7 = panel7.drop(columns=["CBSA_Code", "_merge"])
+
+print("Filas panel antes merge HOAM:", panel_rows_before)
+print("Filas panel despues merge HOAM:", len(panel7))
+print("Pares (CBSACode, year, month) con match HOAM:", match_found)
+print("% missing Affordability:", round(panel7["Affordability"].isna().mean() * 100, 4), "%")
+matched_month_var = (
+    panel7.dropna(subset=["Affordability"])
+    .groupby(["CBSACode", "year"], as_index=False)["month"]
+    .nunique()
+)
+if len(matched_month_var):
+    print("Meses únicos promedio por (CBSACode, year) con match HOAM:", round(matched_month_var["month"].mean(), 3))
+print(
+    "% missing Housing_Cost%_of_Med_HHIncome:",
+    round(panel7["Housing_Cost%_of_Med_HHIncome"].isna().mean() * 100, 4),
+    "%",
+)
+
+panel7.to_csv(OUT_PATH, index=False, encoding="utf-8")
 
 print("\n==============================")
 print("OK - Output creado:", OUT_PATH)
-print("Filas:", len(panel6), "| Columnas:", panel6.shape[1])
+print("Filas:", len(panel7), "| Columnas:", panel7.shape[1])
 print("Ejemplo filas:")
-print(panel6.head(5))
+print(panel7.head(5))
 print("==============================")
