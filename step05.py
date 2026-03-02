@@ -50,8 +50,18 @@ STEP 5:
   y (si existe Year) también por year
 - Añadir a la derecha: Permits (desde columna E del fichero, renombrada)
 
+STEP 6:
+- Añade Zori_index desde:
+  /Users/vegagonzalez/Desktop/rents/Metro_zori_uc_sfrcondomfr_sm_sa_month_cleaned.csv
+- Convierte ZORI de formato wide a long: RegionID, year, month, Zori_index
+- Cruce:
+  panel.MSACode == zori.RegionID
+  panel.year == zori.year
+  panel.month == zori.month
+- Ignora el día (solo year y month)
+
 OUTPUT:
-- /Users/vegagonzalez/Desktop/rents/panel_master_step5_cbsa_unemployment_rpi_population_aland_permits.csv
+- /Users/vegagonzalez/Desktop/rents/panel_master_step6_cbsa_unemployment_rpi_population_aland_permits_zori.csv
 """
 
 import os
@@ -71,11 +81,12 @@ RPI_CSV = os.path.join(BASE_DIR, "RPP", "MARPP_MSA_2008_2023.csv")
 POP_CSV = os.path.join(BASE_DIR, "population_2012_2024.csv")
 GAZ_TXT = os.path.join(BASE_DIR, "2024_Gaz_cbsa_national.txt")
 PERMITS_CSV = os.path.join(BASE_DIR, "permits_cbsa_2012_2025.csv")
+ZORI_CSV = os.path.join(BASE_DIR, "Metro_zori_uc_sfrcondomfr_sm_sa_month_cleaned.csv")
 
 # Output
 OUT_PATH = os.path.join(
     BASE_DIR,
-    "panel_master_step5_cbsa_unemployment_rpi_population_aland_permits.csv"
+    "panel_master_step6_cbsa_unemployment_rpi_population_aland_permits_zori.csv"
 )
 
 
@@ -477,8 +488,77 @@ else:
 
 print("Celdas Permits NO vacias:", int(panel5["Permits"].notna().sum()), "de", len(panel5))
 
-# Orden final: Permits a la derecha
-panel5 = panel5[
+
+# ============================================================
+# STEP 6: Add Zori_index from Metro_zori_uc_sfrcondomfr_sm_sa_month_cleaned.csv
+# ============================================================
+print("\n==============================")
+print("STEP 6: Add Zori_index from Metro_zori_uc_sfrcondomfr_sm_sa_month_cleaned.csv")
+print("==============================")
+
+zori_raw = pd.read_csv(ZORI_CSV, dtype=str)
+zori_raw = strip_columns(zori_raw)
+
+if "RegionID" not in zori_raw.columns:
+    raise ValueError(
+        "No encuentro columna 'RegionID' en Metro_zori_uc_sfrcondomfr_sm_sa_month_cleaned.csv. Columnas: "
+        + str(list(zori_raw.columns))
+    )
+
+date_cols = [
+    c for c in zori_raw.columns
+    if re.fullmatch(r"(19|20)\d{2}-\d{2}-\d{2}", str(c).strip())
+]
+if len(date_cols) == 0:
+    raise ValueError(
+        "No pude detectar columnas de fecha YYYY-MM-DD en Metro_zori_uc_sfrcondomfr_sm_sa_month_cleaned.csv."
+    )
+
+zori_long = zori_raw.melt(
+    id_vars=["RegionID"],
+    value_vars=date_cols,
+    var_name="date",
+    value_name="Zori_index",
+)
+
+zori_long["date"] = pd.to_datetime(zori_long["date"], errors="coerce")
+zori_long = zori_long.dropna(subset=["date"]).copy()
+
+zori_long["RegionID"] = zori_long["RegionID"].astype("string").str.strip()
+zori_long["year"] = zori_long["date"].dt.year.astype(str)
+zori_long["month"] = zori_long["date"].dt.month.astype(str).str.zfill(2)
+zori_long["Zori_index"] = zori_long["Zori_index"].astype("string").str.strip()
+
+zori_long = (
+    zori_long[["RegionID", "year", "month", "Zori_index"]]
+    .groupby(["RegionID", "year", "month"], as_index=False)["Zori_index"]
+    .first()
+)
+
+panel5["MSACode"] = panel5["MSACode"].astype("string").str.strip()
+panel6 = panel5.merge(
+    zori_long,
+    left_on=["MSACode", "year", "month"],
+    right_on=["RegionID", "year", "month"],
+    how="inner",
+).drop(columns=["RegionID"])
+
+print("Filas tras drop de no-cruce MSACode/RegionID/year/month:", len(panel6))
+print("Celdas Zori_index NO vacias:", int(panel6["Zori_index"].notna().sum()), "de", len(panel6))
+
+# QC: validar faltantes de Zori_index solo esperados en 2012-2014
+panel6["Zori_index"] = panel6["Zori_index"].astype("string").str.strip()
+panel6["year_int"] = pd.to_numeric(panel6["year"], errors="coerce")
+missing_zori = panel6[(panel6["year_int"] >= 2015) & (panel6["Zori_index"].isna() | (panel6["Zori_index"] == ""))].copy()
+if len(missing_zori) == 0:
+    print("QC ZORI: OK - No hay blancos en Zori_index para años >= 2015")
+else:
+    print("QC ZORI: WARNING - Hay", len(missing_zori), "filas con Zori_index en blanco para años >= 2015")
+    print("QC ZORI: Blancos por año (>=2015):")
+    print(missing_zori.groupby("year", as_index=False).size().head(20))
+
+# Orden final: Zori_index a la derecha
+panel6 = panel6[
     [
         "CBSACode",
         "MSACode",
@@ -492,14 +572,15 @@ panel5 = panel5[
         "population",
         "Aland_sqm",
         "Permits",
+        "Zori_index",
     ]
 ].copy()
 
-panel5.to_csv(OUT_PATH, index=False, encoding="utf-8")
+panel6.to_csv(OUT_PATH, index=False, encoding="utf-8")
 
 print("\n==============================")
 print("OK - Output creado:", OUT_PATH)
-print("Filas:", len(panel5), "| Columnas:", panel5.shape[1])
+print("Filas:", len(panel6), "| Columnas:", panel6.shape[1])
 print("Ejemplo filas:")
-print(panel5.head(5))
+print(panel6.head(5))
 print("==============================")
