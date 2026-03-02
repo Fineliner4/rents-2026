@@ -68,8 +68,18 @@ STEP 6:
   panel.month == zori.month
 - Ignora el día (solo year y month)
 
+STEP 7:
+- Añade dos columnas de HOAM desde:
+  /Users/vegagonzalez/Desktop/rents/HOAM_CBSA_Data.xlsx
+- Cruce:
+  panel.CBSACode == HOAM columna B
+- Añade al final del panel las columnas D y E del Excel con sus nombres originales.
+  Si vienen sin encabezado usable (por ejemplo "Unnamed: ..."), usa HOAM_D y HOAM_E.
+- Merge LEFT many-to-one (sin perder filas del panel). Si HOAM trae duplicados por CBSACode,
+  colapsa tomando el primer valor no nulo de D/E por código.
+
 OUTPUT:
-- /Users/vegagonzalez/Desktop/rents/panel_master_step6_cbsa_unemployment_rpi_population_aland_permits_zori.csv
+- /Users/vegagonzalez/Desktop/rents/panel_master_step7_cbsa_unemployment_rpi_population_aland_permits_zori_hoam.csv
 """
 
 import os
@@ -90,11 +100,12 @@ POP_CSV = os.path.join(BASE_DIR, "population_2012_2024.csv")
 GAZ_TXT = os.path.join(BASE_DIR, "2024_Gaz_cbsa_national.txt")
 PERMITS_CSV = os.path.join(BASE_DIR, "permits_cbsa_2012_2025.csv")
 ZORI_CSV = os.path.join(BASE_DIR, "Metro_zori_uc_sfrcondomfr_sm_sa_month_cleaned.csv")
+HOAM_XLSX = os.path.join(BASE_DIR, "HOAM_CBSA_Data.xlsx")
 
 # Output
 OUT_PATH = os.path.join(
     BASE_DIR,
-    "panel_master_step6_cbsa_unemployment_rpi_population_aland_permits_zori.csv"
+    "panel_master_step7_cbsa_unemployment_rpi_population_aland_permits_zori_hoam.csv"
 )
 
 
@@ -166,6 +177,25 @@ def read_text_table_guess_sep(path: str) -> pd.DataFrame:
         except Exception:
             pass
     raise ValueError("No pude leer el TXT con separadores tab/pipe/coma: " + path)
+
+
+def clean_header_name(header_value, fallback_name: str) -> str:
+    """Limpia encabezados vacíos/Unnamed; si no hay nombre usable retorna fallback."""
+    if pd.isna(header_value):
+        return fallback_name
+    h = str(header_value).strip()
+    if h == "" or h.lower().startswith("unnamed:"):
+        return fallback_name
+    return h
+
+
+def first_non_null(series: pd.Series):
+    """Devuelve el primer valor no nulo/no vacío de una serie; si no existe, NA."""
+    valid = series.dropna().astype("string").str.strip()
+    valid = valid[valid != ""]
+    if len(valid) == 0:
+        return pd.NA
+    return valid.iloc[0]
 
 
 # ============================================================
@@ -584,11 +614,70 @@ panel6 = panel6[
     ]
 ].copy()
 
-panel6.to_csv(OUT_PATH, index=False, encoding="utf-8")
+
+# ============================================================
+# STEP 7: Add HOAM columns D/E from HOAM_CBSA_Data.xlsx (col B -> CBSACode)
+# ============================================================
+print("\n==============================")
+print("STEP 7: Add HOAM columns D/E from HOAM_CBSA_Data.xlsx")
+print("==============================")
+
+# Limpieza IN-PLACE de identificador en panel (sin columnas auxiliares)
+panel6["CBSACode"] = panel6["CBSACode"].map(zfill_5)
+
+hoam_raw = pd.read_excel(HOAM_XLSX, dtype=str)
+hoam_raw = strip_columns(hoam_raw)
+
+if hoam_raw.shape[1] < 5:
+    raise ValueError(
+        "HOAM_CBSA_Data.xlsx tiene menos de 5 columnas; necesito B, D y E. Columnas: "
+        + str(list(hoam_raw.columns))
+    )
+
+hoam_key_name = hoam_raw.columns[1]
+hoam_d_name = clean_header_name(hoam_raw.columns[3], "HOAM_D")
+hoam_e_name = clean_header_name(hoam_raw.columns[4], "HOAM_E")
+
+# Evitar colisiones de nombre (si D y E traen el mismo header)
+if hoam_e_name == hoam_d_name:
+    hoam_e_name = f"{hoam_e_name}_E"
+
+hoam = hoam_raw.iloc[:, [1, 3, 4]].copy()
+hoam.columns = [hoam_key_name, hoam_d_name, hoam_e_name]
+
+# Estandarización de clave para cruce many-to-one
+hoam[hoam_key_name] = hoam[hoam_key_name].map(zfill_5)
+hoam = hoam.dropna(subset=[hoam_key_name]).copy()
+
+# Colapso de duplicados por CBSACode conservando primer valor no nulo para D y E
+hoam = (
+    hoam.groupby(hoam_key_name, as_index=False)
+    .agg({
+        hoam_d_name: first_non_null,
+        hoam_e_name: first_non_null,
+    })
+)
+
+# LEFT JOIN sobre panel, agregando nuevas columnas al final
+panel7 = panel6.merge(
+    hoam,
+    left_on="CBSACode",
+    right_on=hoam_key_name,
+    how="left",
+    validate="many_to_one",
+)
+
+if hoam_key_name != "CBSACode":
+    panel7 = panel7.drop(columns=[hoam_key_name])
+
+print("Celdas", hoam_d_name, "NO vacias:", int(panel7[hoam_d_name].notna().sum()), "de", len(panel7))
+print("Celdas", hoam_e_name, "NO vacias:", int(panel7[hoam_e_name].notna().sum()), "de", len(panel7))
+
+panel7.to_csv(OUT_PATH, index=False, encoding="utf-8")
 
 print("\n==============================")
 print("OK - Output creado:", OUT_PATH)
-print("Filas:", len(panel6), "| Columnas:", panel6.shape[1])
+print("Filas:", len(panel7), "| Columnas:", panel7.shape[1])
 print("Ejemplo filas:")
-print(panel6.head(5))
+print(panel7.head(5))
 print("==============================")
