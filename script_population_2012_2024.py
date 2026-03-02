@@ -90,6 +90,13 @@ for stem in FILES_SORTED:
 # Une (concat) respetando el orden por año
 out = pd.concat(parts, ignore_index=True)
 
+# En la columna B (segunda columna), deja solo los últimos 5 dígitos
+# del valor original. Ejemplo: 310M100US10180 -> 10180
+col_b = out.columns[1]
+out[col_b] = out[col_b].apply(
+    lambda v: re.search(r"(\d{5})$", str(v)).group(1) if pd.notna(v) and re.search(r"(\d{5})$", str(v)) else str(v)[-5:]
+)
+
 # Guarda
 out.to_csv(OUT_PATH, index=False, encoding="utf-8")
 
