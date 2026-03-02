@@ -118,6 +118,30 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
                 return c
         return None
 
+    # Prioriza nombres exactos/frecuentes (evita confundir columnas con años/notas)
+    lower_to_real = {c.lower(): c for c in df.columns}
+    exact_candidates = {
+        "CSA": ["csa"],
+        "CBSA": ["cbsa", "cbsa code"],
+        "Name": ["name", "cbsa name", "metropolitan statistical area"],
+        "Total": ["total", "total units"],
+        "1 Unit": ["1 unit", "one unit"],
+        "2 Units": ["2 units", "two units"],
+        "3 and 4 Units": ["3 and 4 units", "3-4 units", "3 & 4 units"],
+        "5 Units or More": ["5 units or more", "5 or more units", "5+ units"],
+        "Num of Structures With 5 Units or More": [
+            "num of structures with 5 units or more",
+            "number of structures with 5 units or more",
+        ],
+    }
+
+    rename = {}
+    for target, aliases in exact_candidates.items():
+        for alias in aliases:
+            if alias in lower_to_real:
+                rename[lower_to_real[alias]] = target
+                break
+
     csa_col  = find_col(["csa"])
     cbsa_col = find_col(["cbsa"])
     name_col = find_col(["name"]) or find_col(["area"]) or find_col(["metropolitan"])
@@ -132,16 +156,16 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
         or find_col(["num", "structures"])
     )
 
-    rename = {}
-    if csa_col: rename[csa_col] = "CSA"
-    if cbsa_col: rename[cbsa_col] = "CBSA"
-    if name_col: rename[name_col] = "Name"
-    if total_col: rename[total_col] = "Total"
-    if one_col: rename[one_col] = "1 Unit"
-    if two_col: rename[two_col] = "2 Units"
-    if three4_col: rename[three4_col] = "3 and 4 Units"
-    if fivep_col: rename[fivep_col] = "5 Units or More"
-    if num_struct5_col: rename[num_struct5_col] = "Num of Structures With 5 Units or More"
+    if csa_col and "CSA" not in rename.values(): rename[csa_col] = "CSA"
+    if cbsa_col and "CBSA" not in rename.values(): rename[cbsa_col] = "CBSA"
+    if name_col and "Name" not in rename.values(): rename[name_col] = "Name"
+    if total_col and "Total" not in rename.values(): rename[total_col] = "Total"
+    if one_col and "1 Unit" not in rename.values(): rename[one_col] = "1 Unit"
+    if two_col and "2 Units" not in rename.values(): rename[two_col] = "2 Units"
+    if three4_col and "3 and 4 Units" not in rename.values(): rename[three4_col] = "3 and 4 Units"
+    if fivep_col and "5 Units or More" not in rename.values(): rename[fivep_col] = "5 Units or More"
+    if num_struct5_col and "Num of Structures With 5 Units or More" not in rename.values():
+        rename[num_struct5_col] = "Num of Structures With 5 Units or More"
 
     df = df.rename(columns=rename)
 
@@ -186,12 +210,36 @@ def load_excel_units(path: str, year: int) -> pd.DataFrame:
     if not sheet:
         raise ValueError(f"No encuentro hoja de 'Units' en {path}. Hojas: {xls.sheet_names}")
 
-    df = pd.read_excel(path, sheet_name=sheet, dtype=str)
+    # Muchos archivos traen títulos/notas arriba. Detectamos la fila real de encabezado.
+    raw = pd.read_excel(path, sheet_name=sheet, header=None, dtype=str)
+    header_row = None
+    for i in range(min(len(raw), 40)):
+        cells = [str(x).strip().lower() for x in raw.iloc[i].tolist() if pd.notna(x)]
+        line = " | ".join(cells)
+        has_cbsa = "cbsa" in line
+        has_units = "unit" in line
+        has_total = "total" in line
+        if has_cbsa and has_units and has_total:
+            header_row = i
+            break
+
+    if header_row is None:
+        # fallback al comportamiento original
+        df = pd.read_excel(path, sheet_name=sheet, dtype=str)
+    else:
+        headers = [str(x).strip() if pd.notna(x) else f"col_{j}" for j, x in enumerate(raw.iloc[header_row].tolist())]
+        df = raw.iloc[header_row + 1 :].copy()
+        df.columns = headers
+
     df = normalize_columns(df)
     df = df.dropna(how="all")
 
+    # Descarta filas vacías/artefactos antes de filtrar
+    df["CBSA"] = df["CBSA"].astype("string").str.strip()
+    df = df[df["CBSA"].notna() & (df["CBSA"] != "")].copy()
+
     # filtro suave CBSA (si aplica)
-    cbsa_clean = df["CBSA"].astype("string").str.strip()
+    cbsa_clean = df["CBSA"]
     mask_cbsa = cbsa_clean.str.match(r"^\d{5}$", na=False)
     if mask_cbsa.sum() > 0:
         df = df[mask_cbsa].copy()
